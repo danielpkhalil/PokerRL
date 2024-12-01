@@ -102,10 +102,10 @@ def visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_pol
     smoothed_agent1_rewards = uniform_filter1d(agent1_rewards, size=50)
     smoothed_agent2_rewards = uniform_filter1d(agent2_rewards, size=50)
 
-    plt.figure(figsize=(14, 8))
+    plt.figure(figsize=(16, 10))
 
     # Plot smoothed rewards
-    plt.subplot(2, 1, 1)
+    plt.subplot(3, 1, 1)
     plt.plot(smoothed_agent1_rewards, label="Agent 1 Rewards", color="blue", alpha=0.7)
     plt.plot(smoothed_agent2_rewards, label="Agent 2 Rewards", color="orange", alpha=0.7)
     plt.xlabel("Episodes")
@@ -115,7 +115,7 @@ def visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_pol
     plt.grid(True)
 
     # Plot action distributions as stacked bar charts
-    plt.subplot(2, 1, 2)
+    plt.subplot(3, 1, 2)
     bar_width = 0.35
     x = np.arange(len(agent1_policy))
     plt.bar(x - bar_width / 2, agent1_policy, bar_width, label="Agent 1", color="blue", alpha=0.7)
@@ -126,6 +126,14 @@ def visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_pol
     plt.xticks(range(len(agent1_policy)))
     plt.legend()
     plt.grid(True)
+
+    # Plot final total rewards for both agents
+    plt.subplot(3, 1, 3)
+    final_rewards = [sum(agent1_rewards), sum(agent2_rewards)]
+    plt.bar(["Agent 1", "Agent 2"], final_rewards, color=["blue", "orange"], alpha=0.7)
+    plt.ylabel("Total Rewards")
+    plt.title("Final Total Rewards for Both Agents")
+    plt.grid(True, axis="y")
 
     plt.tight_layout()
     plt.show()
@@ -144,7 +152,7 @@ agent1 = DQNAgent(state_size, action_size)
 agent2 = DQNAgent(state_size, action_size)
 
 # Training loop
-episodes = 1000
+episodes = 10000
 batch_size = 32
 agent1_rewards = []
 agent2_rewards = []
