@@ -2,28 +2,58 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from pettingzoo.classic import texas_holdem_no_limit_v6
+from collections import defaultdict
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from scipy.ndimage import uniform_filter1d
 
-# Define the DQN model
-class DQN(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super(DQN, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, output_dim)
-        )
+# Define a Bayesian Network for decision-making
+class BayesianNetwork:
+    def __init__(self, state_size, action_size):
+        self.state_size = state_size
+        self.action_size = action_size
+        # Prior probabilities for actions
+        self.action_priors = np.ones(action_size) / action_size
+        # Transition probabilities: P(s' | s, a)
+        self.transition_probs = defaultdict(lambda: defaultdict(lambda: np.ones(state_size) / state_size))
+        # Reward probabilities: P(r | s, a)
+        self.reward_probs = defaultdict(lambda: defaultdict(lambda: np.ones(2)))  # Binary rewards (0 or 1)
 
-    def forward(self, x):
-        return self.net(x)
+    def update_transition_probs(self, state, action, next_state):
+        """
+        Update transition probabilities based on observed transitions.
+        """
+        self.transition_probs[state][action][next_state] += 1
+        self.transition_probs[state][action] /= self.transition_probs[state][action].sum()
 
-# Replay buffer for DQN
-class ReplayBuffer:
+    def update_reward_probs(self, state, action, reward):
+        """
+        Update reward probabilities based on observed rewards.
+        """
+        self.reward_probs[state][action][reward] += 1
+        self.reward_probs[state][action] /= self.reward_probs[state][action].sum()
+
+    def get_action_value(self, state, action, gamma=0.99):
+        """
+        Compute the expected value of an action given the current state.
+        """
+        expected_value = 0.0
+        for next_state in range(self.state_size):
+            transition_prob = self.transition_probs[state][action][next_state]
+            reward_prob = self.reward_probs[state][action]
+            expected_reward = reward_prob[1]  # Probability of reward = 1
+            expected_value += transition_prob * (expected_reward + gamma * self.get_state_value(next_state))
+        return expected_value
+
+    def get_state_value(self, state, gamma=0.99):
+        """
+        Compute the value of a state by considering the best action.
+        """
+        return max(self.get_action_value(state, action, gamma) for action in range(self.action_size))
+
+# Replay buffer for Bayesian agent
+class BayesianReplayBuffer:
     def __init__(self, size=10000):
         self.buffer = []
         self.max_size = size
@@ -36,76 +66,53 @@ class ReplayBuffer:
     def sample(self, batch_size):
         return random.sample(self.buffer, batch_size)
 
-# DQN agent class
-class DQNAgent:
+# Bayesian agent class
+class BayesianAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.model = DQN(state_size, action_size)
-        self.target_model = DQN(state_size, action_size)
-        self.update_target_model()
-        self.replay_buffer = ReplayBuffer()
+        self.network = BayesianNetwork(state_size, action_size)
+        self.replay_buffer = BayesianReplayBuffer()
         self.gamma = 0.99
         self.epsilon = 1.0
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.1
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
-        self.loss_fn = nn.MSELoss()
-
-    def update_target_model(self):
-        self.target_model.load_state_dict(self.model.state_dict())
 
     def act(self, state, action_mask):
+        """
+        Select an action using epsilon-greedy strategy.
+        """
         if np.random.rand() < self.epsilon:
             allowed_actions = np.flatnonzero(action_mask)
             return np.random.choice(allowed_actions)
-        state = torch.FloatTensor(state).unsqueeze(0)
-        with torch.no_grad():
-            q_values = self.model(state)
-        q_values = q_values.cpu().numpy().flatten()
+        q_values = [self.network.get_action_value(state, action) for action in range(self.action_size)]
+        q_values = np.array(q_values)
         q_values[~action_mask.astype(bool)] = -np.inf
         return np.argmax(q_values)
 
     def train(self, batch_size):
+        """
+        Train the Bayesian Network using replayed experiences.
+        """
         if len(self.replay_buffer.buffer) < batch_size:
             return
         batch = self.replay_buffer.sample(batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
-
-        states = torch.FloatTensor(states)
-        actions = torch.LongTensor(actions)
-        rewards = torch.FloatTensor(rewards)
-        next_states = torch.FloatTensor(next_states)
-        dones = torch.FloatTensor(dones)
-
-        q_values = self.model(states)
-        next_q_values = self.target_model(next_states)
-
-        target_q_values = q_values.clone()
-        for i in range(batch_size):
-            if dones[i]:
-                target_q_values[i, actions[i]] = rewards[i]
-            else:
-                target_q_values[i, actions[i]] = rewards[i] + self.gamma * torch.max(next_q_values[i]).item()
-
-        loss = self.loss_fn(q_values, target_q_values)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        for state, action, reward, next_state, done in batch:
+            self.network.update_transition_probs(state, action, next_state)
+            self.network.update_reward_probs(state, action, reward)
 
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
-
 # Visualization function
 def visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_policy):
     # Apply smoothing to rewards for visualization
     smoothed_agent1_rewards = uniform_filter1d(agent1_rewards, size=50)
     smoothed_agent2_rewards = uniform_filter1d(agent2_rewards, size=50)
 
-    plt.figure(figsize=(16, 10))
+    plt.figure(figsize=(14, 8))
 
     # Plot smoothed rewards
-    plt.subplot(3, 1, 1)
+    plt.subplot(2, 1, 1)
     plt.plot(smoothed_agent1_rewards, label="Agent 1 Rewards", color="blue", alpha=0.7)
     plt.plot(smoothed_agent2_rewards, label="Agent 2 Rewards", color="orange", alpha=0.7)
     plt.xlabel("Episodes")
@@ -115,7 +122,7 @@ def visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_pol
     plt.grid(True)
 
     # Plot action distributions as stacked bar charts
-    plt.subplot(3, 1, 2)
+    plt.subplot(2, 1, 2)
     bar_width = 0.35
     x = np.arange(len(agent1_policy))
     plt.bar(x - bar_width / 2, agent1_policy, bar_width, label="Agent 1", color="blue", alpha=0.7)
@@ -126,14 +133,6 @@ def visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_pol
     plt.xticks(range(len(agent1_policy)))
     plt.legend()
     plt.grid(True)
-
-    # Plot final total rewards for both agents
-    plt.subplot(3, 1, 3)
-    final_rewards = [sum(agent1_rewards), sum(agent2_rewards)]
-    plt.bar(["Agent 1", "Agent 2"], final_rewards, color=["blue", "orange"], alpha=0.7)
-    plt.ylabel("Total Rewards")
-    plt.title("Final Total Rewards for Both Agents")
-    plt.grid(True, axis="y")
 
     plt.tight_layout()
     plt.show()
@@ -148,11 +147,11 @@ sample_observation, _, _, _, _ = env.last()
 state_size = sample_observation["observation"].shape[0]
 action_size = env.action_space(sample_agent).n
 
-agent1 = DQNAgent(state_size, action_size)
-agent2 = DQNAgent(state_size, action_size)
+agent1 = BayesianAgent(state_size, action_size)
+agent2 = BayesianAgent(state_size, action_size)
 
 # Training loop
-episodes = 10000
+episodes = 1000
 batch_size = 32
 agent1_rewards = []
 agent2_rewards = []
