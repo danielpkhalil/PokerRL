@@ -1,3 +1,3 @@
 # PokerRL
 
-Single file implementation of texas hold'em no limit using petting zoo.
+Implementation of an RL poker bot playing Texas hold'em no limit using the PettingZoo API.
