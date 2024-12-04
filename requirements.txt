@@ -1,0 +1,10 @@
+numpy
+matplotlib
+pettingzoo
+torch==1.13.1
+scikit-learn
+scipy
+rlcard
+pygame
+pyro-ppl
+typing
