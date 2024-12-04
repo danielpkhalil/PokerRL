@@ -2,7 +2,7 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from pettingzoo.classic import texas_holdem_no_limit_v6
-from collections import defaultdict
+from collections import defaultdict, deque
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -82,15 +82,18 @@ class ReplayBuffer:
     def sample(self, batch_size):
         return random.sample(self.buffer, batch_size)
 
-
 # Bayesian Agent
 class BayesianAgent:
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, history_size=10):
         self.state_size = state_size
         self.action_size = action_size
+        self.history_size = history_size
+
+        # History of played cards
+        self.history = deque(maxlen=self.history_size)
 
         # Define a BNN model for each action
-        self.models = [BNN(in_dim=state_size, out_dim=1, hid_dim=128, n_hid_layers=3) for _ in range(action_size)]
+        self.models = [BNN(in_dim=state_size + self.history_size, out_dim=1, hid_dim=128, n_hid_layers=3) for _ in range(action_size)]
         self.optimizers = [Adam({"lr": 0.001}) for _ in range(action_size)]
         self.svis = [
             SVI(model=model, guide=pyro.infer.autoguide.AutoDiagonalNormal(model), optim=opt, loss=Trace_ELBO())
@@ -103,11 +106,22 @@ class BayesianAgent:
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.1
 
+    def update_history(self, cards):
+        """Update the history with newly played cards."""
+        self.history.extend(cards)
+
+    def get_augmented_state(self, state):
+        """Augment the state with the history of played cards."""
+        history_array = np.array(self.history).flatten()
+        padded_history = np.pad(history_array, (0, max(0, self.history_size - len(history_array))), mode='constant')
+        return np.concatenate([state, padded_history])
+
     def act(self, state, action_mask):
         """
         Select an action using epsilon-greedy policy.
         """
-        state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        augmented_state = self.get_augmented_state(state)
+        state_tensor = torch.FloatTensor(augmented_state).unsqueeze(0)
 
         if np.random.rand() < self.epsilon:
             allowed_actions = np.flatnonzero(action_mask)
@@ -190,50 +204,54 @@ def visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_pol
     
 def plot_posterior(y_samples: np.ndarray, f_samples: np.ndarray = None) -> None:
     """
-    Plots samples from posterior, along with ±1 std. uncertainty bands.
+    Plots samples from the posterior, along with ±1 std. uncertainty bands.
     y = f + eps
 
     Args:
-        y_samples: Samples of y from posterior
-        f_samples: Samples of f(x) from posterior, optional
+        y_samples: Samples of y from the posterior (n_samples x n_points).
+        f_samples: Samples of f(x) from the posterior, optional (n_samples x n_points).
     """
+    # Compute statistics for y_samples
     pred_mean = y_samples.mean(axis=0)
     pred_std = y_samples.std(axis=0)
     pred_var = pred_std ** 2
     print('Avg. predictive uncertainty:', pred_var.mean())
 
     if f_samples is not None:
+        # Compute statistics for f_samples
         model_mean = f_samples.mean(axis=0)
         model_std = f_samples.std(axis=0)
         model_var = model_std ** 2
         print('Avg. model uncertainty:', model_var.mean())
 
+        # Compute data uncertainty
         data_var = np.abs(pred_var - model_var)
         data_std = np.sqrt(data_var)
         print('Avg. data uncertainty:', data_var.mean())
 
+    # Plot the results
     fig, ax = plt.subplots(1, 1, tight_layout=True, figsize=(8, 6))
-    ax.plot(np.sort(test_X[:, 0]), np.sort(test_y), c='black', label='True f(x)')
-    ax.scatter(np.sort(train_X[:, 0]), np.sort(train_y), marker='x', c='green', label='Training Data')
+    x = np.arange(y_samples.shape[1])  # Assuming x-coordinates are indices
 
-    if f_samples is None:
-        ax.fill_between(np.sort(test_X[:, 0]),
-                        pred_mean + pred_std, pred_mean - pred_std,
-                        alpha=0.5, label='Predictive Uncertainty')
-    else:
-        ax.fill_between(np.sort(test_X[:, 0]),
-                        model_mean + model_std, model_mean - model_std,
-                        alpha=0.5, label='Model Uncertainty')
+    ax.plot(x, pred_mean, c='blue', label='Predictive Mean')
 
-        ax.fill_between(np.sort(test_X[:, 0]),
-                        model_mean + model_std, model_mean + pred_std,
+    # Predictive uncertainty band
+    ax.fill_between(x, pred_mean + pred_std, pred_mean - pred_std, 
+                    alpha=0.5, color='blue', label='Predictive Uncertainty')
+
+    if f_samples is not None:
+        # Model uncertainty band
+        ax.fill_between(x, model_mean + model_std, model_mean - model_std, 
+                        alpha=0.5, color='orange', label='Model Uncertainty')
+
+        # Data uncertainty band
+        ax.fill_between(x, model_mean + model_std, model_mean + pred_std, 
                         color='red', alpha=0.5, label='Data Uncertainty')
-        ax.fill_between(np.sort(test_X[:, 0]),
-                        model_mean - model_std, model_mean - pred_std,
+        ax.fill_between(x, model_mean - model_std, model_mean - pred_std, 
                         color='red', alpha=0.5)
 
     ax.legend()
-    plt.xlabel("Input (x)")
+    plt.xlabel("Index (x)")
     plt.ylabel("Output (y)")
     plt.title("Posterior Predictive with Uncertainty Bands")
     plt.grid(True)
@@ -249,8 +267,11 @@ sample_observation, _, _, _, _ = env.last()
 state_size = sample_observation["observation"].shape[0]
 action_size = env.action_space(sample_agent).n
 
-agent1 = BayesianAgent(state_size, action_size)
-agent2 = BayesianAgent(state_size, action_size)
+# Include history size
+history_size = 10
+
+agent1 = BayesianAgent(state_size, action_size, history_size)
+agent2 = BayesianAgent(state_size, action_size, history_size)
 
 # Training loop
 episodes = 100
@@ -282,29 +303,27 @@ for episode in range(episodes):
         if agent == "player_0":
             action = agent1.act(state, action_mask)
             agent1_action_counts[action] += 1
+            agent1.update_history(observation.get("played_cards", []))
         else:
             action = agent2.act(state, action_mask)
             agent2_action_counts[action] += 1
+            agent2.update_history(observation.get("played_cards", []))
 
         env.step(action)
         next_observation, reward, done, truncation, _ = env.last()
         next_state = next_observation["observation"]
-        
-        print("state: ", state)
 
         if agent == "player_0":
-            agent1.replay_buffer.add((state, action, reward, next_state, done))
+            agent1.replay_buffer.add((agent1.get_augmented_state(state), action, reward, agent1.get_augmented_state(next_state), done))
             agent1.train(batch_size)
         else:
-            agent2.replay_buffer.add((state, action, reward, next_state, done))
+            agent2.replay_buffer.add((agent2.get_augmented_state(state), action, reward, agent2.get_augmented_state(next_state), done))
             agent2.train(batch_size)
-            
-    print("episode: ", episode)
 
     agent1_rewards.append(agent1_total_reward)
     agent2_rewards.append(agent2_total_reward)
 
-    if (episode + 1) % 100 == 0:
+    if (episode + 1) % 10 == 0:
         print(f"Episode {episode + 1}/{episodes} completed.")
 
 # Normalize action counts to represent probabilities
@@ -312,7 +331,7 @@ agent1_policy = agent1_action_counts / np.sum(agent1_action_counts)
 agent2_policy = agent2_action_counts / np.sum(agent2_action_counts)
 
 # Generate posterior samples
-test_X = np.random.uniform(-1, 1, size=(100, 54))  # Generate 100 samples with 54 features
+test_X = np.random.uniform(-1, 1, size=(100, state_size + history_size))  # Adjust input size for test samples
 test_X_tensor = torch.FloatTensor(test_X)
 
 # Collect posterior samples
