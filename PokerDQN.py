@@ -152,7 +152,7 @@ agent1 = DQNAgent(state_size, action_size)
 agent2 = DQNAgent(state_size, action_size)
 
 # Training loop
-episodes = 10000
+episodes = 100
 batch_size = 32
 agents = []
 agent1_rewards = []
@@ -206,7 +206,7 @@ for episode in tqdm(range(episodes)):
     # print("episode: ", episode)
     agent1_rewards.append(agent1_total_reward)
     agent2_rewards.append(agent2_total_reward)
-    if (episode) % 100 == 0:
+    if (episode) % 10 == 0:
         agents.append((agent1, agent2))
 
 # Normalize action counts to represent probabilities
@@ -219,11 +219,35 @@ visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_policy)
 
 from collections import defaultdict
 
+def is_pocket_pair(cards):
+    """
+    Detects if a player's cards form a pocket pair with no community cards.
+
+    Args:
+        cards: A binary vector of size 52 representing the player's hand and community cards.
+
+    Returns:
+        bool: True if the cards represent a pocket pair, False otherwise.
+    """
+    if sum(cards[:52]) != 2:
+        return False  # Ensure only two cards are present (pocket cards)
+
+    # Find the indices of the two cards
+    card_indices = [i for i, value in enumerate(cards[:52]) if value == 1]
+    if len(card_indices) != 2:
+        return False  # Invalid if not exactly 2 cards are present
+
+    # Check if the two cards have the same rank
+    card_ranks = [index % 13 for index in card_indices]
+    return card_ranks[0] == card_ranks[1]
+
+
 def load_model(agent, model_path):
     """
     Load a saved model into the agent's BNN.
     """
     agent.model.load_state_dict(torch.load(model_path))
+    
     
     
 def play_game(agent1, agent2, env):
@@ -237,9 +261,10 @@ def play_game(agent1, agent2, env):
     env.reset()
     agent1_winnings = 0
     agent2_winnings = 0
-
+    pocket_pair_actions = []
     for agent in env.agent_iter():
         observation, reward, done, truncation, info = env.last()
+       
                 # Accumulate rewards for each agent
         if agent == "player_0":
             agent1_winnings += reward
@@ -252,15 +277,18 @@ def play_game(agent1, agent2, env):
 
         state = observation["observation"]
         action_mask = observation["action_mask"]
-
+        cards = state[:52]
         if agent == "player_0":
             action = agent1.act(state, action_mask)
+            if is_pocket_pair(cards):
+                pocket_pair_actions.append(action)
         else:
             action = agent2.act(state, action_mask)
-
+            if is_pocket_pair(cards):
+                pocket_pair_actions.append(action)
         env.step(action)
             
-    return agent1_winnings, agent2_winnings
+    return agent1_winnings, agent2_winnings, pocket_pair_actions
 
 # Environment setup
 env = texas_holdem_v4.env(render_mode="none")
@@ -270,7 +298,7 @@ env.reset()
 # results = test_models(model_paths, agent_template, env, num_games=10)
 
 # Save results for analysis
-def test_best_model(agents, env, num_games=10):
+def test_best_model(agents, env, test_cases, num_games=10):
     """
     Test the best-trained model against all other model versions.
     
@@ -299,11 +327,11 @@ def test_best_model(agents, env, num_games=10):
         opponent_agent_winnings = 0
         best_agent_wins = 0
         opponent_agent_wins = 0
-
+        all_pocket_pair_actions = []
         for _ in range(num_games):
             # Play the game
-            best_winnings, opponent_winnings = play_game(best_agent, opponent_agent, env)
-            
+            best_winnings, opponent_winnings, pocket_pair_actions = play_game(best_agent, opponent_agent, env)
+            all_pocket_pair_actions.extend(pocket_pair_actions)
             # Update winnings
             best_agent_winnings += best_winnings
             opponent_agent_winnings += opponent_winnings
@@ -320,10 +348,23 @@ def test_best_model(agents, env, num_games=10):
             "opponent_agent_winnings": opponent_agent_winnings,
             "best_agent_wins": best_agent_wins,
             "opponent_agent_wins": opponent_agent_wins,
+        
         }
 
         print(f"Played {num_games} games between best model and {model}")
 
+        plt.hist(all_pocket_pair_actions, bins=range(5), align='left', rwidth=0.8)
+
+# Set x-axis labels
+        plt.xticks(ticks=[0, 1, 2, 3], labels=['Call', 'Raise', 'Fold', 'Check'])
+
+        # Add labels and title
+        plt.xlabel('Actions')
+    
+        plt.title('Actions Taken for Pocket Pairs')
+
+        # Display the plot
+        plt.show()
     return results
 
 def plot_best_agent_results(results):
@@ -370,6 +411,30 @@ def plot_best_agent_results(results):
     # Show the plot
     plt.show()
 
-results = test_best_model(agents, env, num_games=1000)
+
+
+test_cases = [[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+               1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # game state for AA and no bets
+              [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+               0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # 7-2 off
+              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], #pair of kings
+              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1,
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] # king queen suited
+              ]
+
+results = test_best_model(agents, env, test_cases, num_games=1000)
 print(results)
 plot_best_agent_results(results)
