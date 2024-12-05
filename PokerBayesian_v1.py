@@ -229,57 +229,57 @@ action_size = env.action_space(sample_agent).n
 agent1 = BayesianAgent(state_size, action_size)
 agent2 = BayesianAgent(state_size, action_size)
 # Training loop
-episodes = 100
+episodes = 10000
 num_saved = 2
 
 batch_size = 32
-agent1_rewards = []
-agent2_rewards = []
-agent1_action_counts = np.zeros(action_size)
-agent2_action_counts = np.zeros(action_size)
+# agent1_rewards = []
+# agent2_rewards = []
+# agent1_action_counts = np.zeros(action_size)
+# agent2_action_counts = np.zeros(action_size)
 
-from tqdm import tqdm 
+# from tqdm import tqdm 
 save_dir = 'model_states'
-for episode in tqdm(range(episodes)):
-    env.reset()
-    agent1_total_reward = 0
-    agent2_total_reward = 0
-    for agent in env.agent_iter():
-        observation, reward, done, truncation, info = env.last()
-        if agent == "player_0":
-            agent1_total_reward += reward
-        else:
-            agent2_total_reward += reward
-        if done or truncation:
-            env.step(None)
-            continue
-        state = observation["observation"]
-        action_mask = observation["action_mask"]
-        if agent == "player_0":
-            action = agent1.act(state, action_mask)
-            agent1_action_counts[action] += 1
-        else:
-            action = agent2.act(state, action_mask)
-            agent2_action_counts[action] += 1
-        env.step(action)
-        next_observation, reward, done, truncation, _ = env.last()
-        next_state = next_observation["observation"]
+# for episode in tqdm(range(episodes)):
+#     env.reset()
+#     agent1_total_reward = 0
+#     agent2_total_reward = 0
+#     for agent in env.agent_iter():
+#         observation, reward, done, truncation, info = env.last()
+#         if agent == "player_0":
+#             agent1_total_reward += reward
+#         else:
+#             agent2_total_reward += reward
+#         if done or truncation:
+#             env.step(None)
+#             continue
+#         state = observation["observation"]
+#         action_mask = observation["action_mask"]
+#         if agent == "player_0":
+#             action = agent1.act(state, action_mask)
+#             agent1_action_counts[action] += 1
+#         else:
+#             action = agent2.act(state, action_mask)
+#             agent2_action_counts[action] += 1
+#         env.step(action)
+#         next_observation, reward, done, truncation, _ = env.last()
+#         next_state = next_observation["observation"]
         
-        #print("state: ", state)
-        if agent == "player_0":
-            agent1.replay_buffer.add((state, action, reward, next_state, done))
-            agent1.train(batch_size)
-        else:
-            agent2.replay_buffer.add((state, action, reward, next_state, done))
-            agent2.train(batch_size)
+#         #print("state: ", state)
+#         if agent == "player_0":
+#             agent1.replay_buffer.add((state, action, reward, next_state, done))
+#             agent1.train(batch_size)
+#         else:
+#             agent2.replay_buffer.add((state, action, reward, next_state, done))
+#             agent2.train(batch_size)
             
-    # print("episode: ", episode)
-    agent1_rewards.append(agent1_total_reward)
-    agent2_rewards.append(agent2_total_reward)
-    if (episode + 1) % (episodes // num_saved) == 0:
-        torch.save(agent1.model.state_dict(), f"{save_dir}/agent1_{episode + 1}.pth")
-        torch.save(agent2.model.state_dict(), f"{save_dir}/agent2_{episode + 1}.pth")
-        print(f"Saved models at episode {episode + 1}")
+#     # print("episode: ", episode)
+#     agent1_rewards.append(agent1_total_reward)
+#     agent2_rewards.append(agent2_total_reward)
+#     if (episode) % (1000) == 0:
+#         torch.save(agent1.model.state_dict(), f"{save_dir}/agent1_{episode}.pth")
+#         torch.save(agent2.model.state_dict(), f"{save_dir}/agent2_{episode}.pth")
+#         print(f"Saved models at episode {episode}")
 # Normalize action counts to represent probabilities
 # agent1_policy = agent1_action_counts / np.sum(agent1_action_counts)
 # agent2_policy = agent2_action_counts / np.sum(agent2_action_counts)
@@ -306,7 +306,7 @@ for episode in tqdm(range(episodes)):
 
 # # Visualize training results
 # visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_policy)
-from collections import defaultdict
+# from collections import defaultdict
 
 def load_model(agent, model_path):
     """
@@ -353,44 +353,44 @@ def play_game(agent1, agent2, env):
 
 
 
-def test_models(model_paths, agent_template, env, num_games=10):
-    """
-    Play all saved models against each other and record winnings and wins.
+# def test_models(model_paths, agent_template, env, num_games=10):
+#     """
+#     Play all saved models against each other and record winnings and wins.
 
-    Returns:
-        results: Dictionary with winnings and wins for each model pair.
-    """
-    results = defaultdict(lambda: {"agent1_winnings": 0, "agent2_winnings": 0, "agent1_wins": 0, "agent2_wins": 0})
-    num_models = len(model_paths)
+#     Returns:
+#         results: Dictionary with winnings and wins for each model pair.
+#     """
+#     results = defaultdict(lambda: {"agent1_winnings": 0, "agent2_winnings": 0, "agent1_wins": 0, "agent2_wins": 0})
+#     num_models = len(model_paths)
 
-    for i in range(num_models):
-        for j in range(num_models):
-            model1_path = model_paths[i]
-            model2_path = model_paths[j]
+#     for i in range(num_models):
+#         for j in range(num_models):
+#             model1_path = model_paths[i]
+#             model2_path = model_paths[j]
 
-            # Load models
-            agent1 = agent_template()
-            agent2 = agent_template()
-            load_model(agent1, model1_path)
-            load_model(agent2, model2_path)
+#             # Load models
+#             agent1 = agent_template()
+#             agent2 = agent_template()
+#             load_model(agent1, model1_path)
+#             load_model(agent2, model2_path)
 
-            # Play games
-            for _ in range(num_games):
-                agent1_winnings, agent2_winnings = play_game(agent1, agent2, env)
+#             # Play games
+#             for _ in range(num_games):
+#                 agent1_winnings, agent2_winnings = play_game(agent1, agent2, env)
 
-                # Update total winnings
-                results[(model1_path, model2_path)]["agent1_winnings"] += agent1_winnings
-                results[(model1_path, model2_path)]["agent2_winnings"] += agent2_winnings
+#                 # Update total winnings
+#                 results[(model1_path, model2_path)]["agent1_winnings"] += agent1_winnings
+#                 results[(model1_path, model2_path)]["agent2_winnings"] += agent2_winnings
 
-                # Determine the game winner
-                if agent1_winnings > agent2_winnings:
-                    results[(model1_path, model2_path)]["agent1_wins"] += 1
-                elif agent2_winnings > agent1_winnings:
-                    results[(model1_path, model2_path)]["agent2_wins"] += 1
+#                 # Determine the game winner
+#                 if agent1_winnings > agent2_winnings:
+#                     results[(model1_path, model2_path)]["agent1_wins"] += 1
+#                 elif agent2_winnings > agent1_winnings:
+#                     results[(model1_path, model2_path)]["agent2_wins"] += 1
 
-            print(f"Played {num_games} games between {os.path.basename(model1_path)} and {os.path.basename(model2_path)}")
+#             print(f"Played {num_games} games between {os.path.basename(model1_path)} and {os.path.basename(model2_path)}")
 
-    return results
+#     return results
 
 # Path to saved models
 import os
@@ -405,7 +405,7 @@ def agent_template():
     return BayesianAgent(state_size=72, action_size=4)
 
 # Test models and record pot sizes
-results = test_models(model_paths, agent_template, env, num_games=10)
+# results = test_models(model_paths, agent_template, env, num_games=10)
 
 # Save results for analysis
 def test_best_model(best_model_path, model_paths, agent_template, env, num_games=10):
@@ -468,7 +468,48 @@ def test_best_model(best_model_path, model_paths, agent_template, env, num_games
 
     return results
 
-best_model_path = f"{save_dir}/agent1_{episodes}.pth"
+def plot_best_agent_results(results):
+    """
+    Plot the results of the best agent against all other models.
+    
+    Args:
+        results: Dictionary containing winnings and win counts for the best agent
+                 against each opponent model, as produced by `test_best_model`.
+    """
+    model_names = [os.path.basename(path) for path in results.keys()]
+    best_agent_winnings = [result["best_agent_winnings"] for result in results.values()]
+    opponent_agent_winnings = [result["opponent_agent_winnings"] for result in results.values()]
+    best_agent_wins = [result["best_agent_wins"] for result in results.values()]
+    opponent_agent_wins = [result["opponent_agent_wins"] for result in results.values()]
+
+    # Set up the figure and axes
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+    # Plot winnings
+    axes[0].bar(model_names, best_agent_winnings, color='blue', alpha=0.7, label='Best Agent Winnings')
+    axes[0].bar(model_names, opponent_agent_winnings, color='orange', alpha=0.7, label='Opponent Winnings')
+    axes[0].set_ylabel('Total Winnings')
+    axes[0].set_title('Best Agent vs. Other Models - Winnings')
+    axes[0].legend()
+
+    # Plot win counts
+    axes[1].bar(model_names, best_agent_wins, color='blue', alpha=0.7, label='Best Agent Wins')
+    axes[1].bar(model_names, opponent_agent_wins, color='orange', alpha=0.7, label='Opponent Wins')
+    axes[1].set_ylabel('Number of Wins')
+    axes[1].set_title('Best Agent vs. Other Models - Win Counts')
+    axes[1].legend()
+
+    # Final adjustments
+    plt.xticks(rotation=45, ha='right')
+    plt.xlabel('Model Name')
+    plt.tight_layout()
+    plt.savefig('figures/best_agent_vs_others_ep_10000')
+
+    # Show the plot
+    plt.show()
+
+best_model_path = f"{save_dir}/agent1_{9000}.pth"
 
 results = test_best_model(best_model_path, model_paths, agent_template, env, num_games=10)
 print(results)
+plot_best_agent_results(results)
