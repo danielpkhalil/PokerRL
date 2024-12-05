@@ -1,7 +1,7 @@
 import random
 import numpy as np
 import matplotlib.pyplot as plt
-from pettingzoo.classic import texas_holdem_no_limit_v6
+from pettingzoo.classic import texas_holdem_no_limit_v6, texas_holdem_v4
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -47,8 +47,8 @@ class DQNAgent:
         self.replay_buffer = ReplayBuffer()
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.epsilon_decay = 0.995
-        self.epsilon_min = 0.1
+        self.epsilon_decay = 0.99
+        self.epsilon_min = 0.05
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         self.loss_fn = nn.MSELoss()
 
@@ -139,7 +139,7 @@ def visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_pol
     plt.show()
 
 # Initialize the environment and agents
-env = texas_holdem_no_limit_v6.env()
+env = texas_holdem_v4.env(render_mode="none")
 env.reset()
 
 # Determine state and action sizes
@@ -154,12 +154,14 @@ agent2 = DQNAgent(state_size, action_size)
 # Training loop
 episodes = 10000
 batch_size = 32
+agents = []
 agent1_rewards = []
 agent2_rewards = []
 agent1_action_counts = np.zeros(action_size)
 agent2_action_counts = np.zeros(action_size)
 
-for episode in range(episodes):
+from tqdm import tqdm 
+for episode in tqdm(range(episodes)):
     env.reset()
     agent1_total_reward = 0
     agent2_total_reward = 0
@@ -201,8 +203,11 @@ for episode in range(episodes):
     agent1.update_target_model()
     agent2.update_target_model()
 
-    if (episode + 1) % 100 == 0:
-        print(f"Episode {episode + 1}/{episodes} completed.")
+    # print("episode: ", episode)
+    agent1_rewards.append(agent1_total_reward)
+    agent2_rewards.append(agent2_total_reward)
+    if (episode) % 100 == 0:
+        agents.append((agent1, agent2))
 
 # Normalize action counts to represent probabilities
 agent1_policy = agent1_action_counts / np.sum(agent1_action_counts)
@@ -210,3 +215,161 @@ agent2_policy = agent2_action_counts / np.sum(agent2_action_counts)
 
 # Visualize training results
 visualize_training(agent1_rewards, agent2_rewards, agent1_policy, agent2_policy)
+
+
+from collections import defaultdict
+
+def load_model(agent, model_path):
+    """
+    Load a saved model into the agent's BNN.
+    """
+    agent.model.load_state_dict(torch.load(model_path))
+    
+    
+def play_game(agent1, agent2, env):
+    """
+    Play a single game between two agents in the environment.
+    Records winnings for each agent and determines the game winner.
+
+    Returns:
+        (float, float): Winnings for agent1 and agent2.
+    """
+    env.reset()
+    agent1_winnings = 0
+    agent2_winnings = 0
+
+    for agent in env.agent_iter():
+        observation, reward, done, truncation, info = env.last()
+                # Accumulate rewards for each agent
+        if agent == "player_0":
+            agent1_winnings += reward
+        else:
+            agent2_winnings += reward
+            
+        if done or truncation:
+            env.step(None)
+            continue
+
+        state = observation["observation"]
+        action_mask = observation["action_mask"]
+
+        if agent == "player_0":
+            action = agent1.act(state, action_mask)
+        else:
+            action = agent2.act(state, action_mask)
+
+        env.step(action)
+            
+    return agent1_winnings, agent2_winnings
+
+# Environment setup
+env = texas_holdem_v4.env(render_mode="none")
+env.reset()
+
+# Test models and record pot sizes
+# results = test_models(model_paths, agent_template, env, num_games=10)
+
+# Save results for analysis
+def test_best_model(agents, env, num_games=10):
+    """
+    Test the best-trained model against all other model versions.
+    
+    Args:
+        best_model_path: Path to the best-trained model.
+        model_paths: List of paths to all model versions.
+        agent_template: Function to instantiate an agent.
+        env: The game environment.
+        num_games: Number of games to play per matchup.
+    
+    Returns:
+        results: Dictionary with winnings and wins for the best model against each other version.
+    """
+    results = {}
+
+    # Load the best model
+    best_agent = agents[-1][0]
+
+    for model in range(len(agents) - 1):
+
+        # Load the opponent model
+        opponent_agent = agents[model][0]
+
+        # Track winnings and wins
+        best_agent_winnings = 0
+        opponent_agent_winnings = 0
+        best_agent_wins = 0
+        opponent_agent_wins = 0
+
+        for _ in range(num_games):
+            # Play the game
+            best_winnings, opponent_winnings = play_game(best_agent, opponent_agent, env)
+            
+            # Update winnings
+            best_agent_winnings += best_winnings
+            opponent_agent_winnings += opponent_winnings
+
+            # Determine game winner
+            if best_winnings > opponent_winnings:
+                best_agent_wins += 1
+            elif opponent_winnings > best_winnings:
+                opponent_agent_wins += 1
+
+        # Record results
+        results[model] = {
+            "best_agent_winnings": best_agent_winnings,
+            "opponent_agent_winnings": opponent_agent_winnings,
+            "best_agent_wins": best_agent_wins,
+            "opponent_agent_wins": opponent_agent_wins,
+        }
+
+        print(f"Played {num_games} games between best model and {model}")
+
+    return results
+
+def plot_best_agent_results(results):
+    """
+    Plot the results of the best agent against all other models.
+    
+    Args:
+        results: Dictionary containing winnings and win counts for the best agent
+                 against each opponent model, as produced by `test_best_model`.
+    """
+
+    best_agent_winnings = [result["best_agent_winnings"] for result in results.values()]
+    expected_winnings = [a/1000 for a in best_agent_winnings]
+    opponent_agent_winnings = [result["opponent_agent_winnings"] for result in results.values()]
+    best_agent_wins = [result["best_agent_wins"] for result in results.values()]
+    opponent_agent_wins = [result["opponent_agent_wins"] for result in results.values()]
+
+    # Set up the figure and axes
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+    # Plot winnings
+    # axes[0].bar(range(len(agents)-1), best_agent_winnings, color='blue', alpha=0.7, label='Best Agent Winnings')
+    # axes[0].bar(range(len(agents)-1), opponent_agent_winnings, color='orange', alpha=0.7, label='Opponent Winnings')
+    # axes[0].set_ylabel('Total Winnings')
+    # axes[0].set_title('Best Agent vs. Other Models - Winnings')
+    # axes[0].legend()
+    axes[0].scatter([i for i in range(len(expected_winnings))], expected_winnings)
+    axes[0].set_title('Expected Best Agent Reward')
+
+    neg = [-1*opponent_agent_wins[i] for i in range(len(opponent_agent_winnings))]
+    # Plot win counts
+    axes[1].bar(range(len(agents)-1), best_agent_wins, color='blue', alpha=0.7, label='Best Agent Wins')
+    axes[1].bar(range(len(agents)-1), neg, color='orange', alpha=0.7, label='Opponent Wins')
+    axes[1].set_ylabel('Number of Wins')
+    axes[1].set_title('Best Agent vs. Other Models - Win Counts')
+    axes[1].legend()
+
+    # Final adjustments
+    plt.xticks(rotation=45, ha='right')
+    plt.xlabel('Model Name')
+    plt.tight_layout()
+    plt.savefig('figures/best_agent_vs_others_ep_10000')
+
+    # Show the plot
+    plt.show()
+
+results = test_best_model(agents, env, num_games=1000)
+print(results)
+plot_best_agent_results(results)
